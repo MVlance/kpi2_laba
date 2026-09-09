@@ -5,14 +5,15 @@
 ## 1. Опис предметної області
 Система автоматизує взаємодію між туристами, агентами та авіакомпаніями (пошук рейсів, вибір додаткових послуг, бронювання, можливість зворотного зв'язку та оплата.).
 
-## 2. Логічна ER-модель
+## 2. Логічна ER-модель (v2, виправлення many-to-many між Ticket та Extra_Service)
 ```mermaid
 erDiagram
     USER ||--o{ BOOKING : places
     BOOKING ||--|{ TICKET : contains
     PASSENGER ||--o{ TICKET : assigned_to
     FLIGHT ||--o{ TICKET : booked_on
-    TICKET }o--o{ EXTRA_SERVICE : includes
+    TICKET ||--o{ TICKET_EXTRA_SERVICE : includes
+    EXTRA_SERVICE ||--o{ TICKET_EXTRA_SERVICE : referenced_by
     BOOKING ||--|| PAYMENT : settles
 
     USER {
@@ -60,6 +61,13 @@ erDiagram
         varchar name
         decimal current_price
     }
+    TICKET_EXTRA_SERVICE {
+        uuid id PK
+        uuid ticket_id FK
+        uuid service_id FK
+        decimal purchased_price
+        int quantity
+    }
     PAYMENT {
         uuid id PK
         uuid booking_id FK
@@ -67,3 +75,4 @@ erDiagram
         varchar status
         timestamp created_at
     }
+```
