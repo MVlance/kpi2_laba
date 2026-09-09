@@ -5,13 +5,15 @@
 ## 1. Опис предметної області
 Система автоматизує взаємодію між туристами, агентами та авіакомпаніями (пошук рейсів, вибір додаткових послуг, бронювання, можливість зворотного зв'язку та оплата.).
 
-## 2. Логічна ER-модель (v2, виправлення many-to-many між Ticket та Extra_Service)
+## 2. Логічна ER-модель (v3, додано FlightSeat замість абстрактного лічильнику available_seats)
 ```mermaid
 erDiagram
     USER ||--o{ BOOKING : places
     BOOKING ||--|{ TICKET : contains
     PASSENGER ||--o{ TICKET : assigned_to
     FLIGHT ||--o{ TICKET : booked_on
+    FLIGHT ||--|{ FLIGHT_SEAT : has
+    FLIGHT_SEAT ||--o| TICKET : allocated_to
     TICKET ||--o{ TICKET_EXTRA_SERVICE : includes
     EXTRA_SERVICE ||--o{ TICKET_EXTRA_SERVICE : referenced_by
     BOOKING ||--|| PAYMENT : settles
@@ -32,7 +34,14 @@ erDiagram
         varchar destination_airport
         timestamp departure_time
         timestamp arrival_time
-        int available_seats
+    }
+    FLIGHT_SEAT {
+        uuid id PK
+        uuid flight_id FK
+        varchar seat_code
+        varchar seat_class
+        decimal base_price
+        varchar status
     }
     BOOKING {
         uuid id PK
