@@ -19,18 +19,28 @@ sequenceDiagram
     DB-->>API: bookingId: 1042
     API-->>UI: bookingCreated(bookingId)
 
-    Tourist->>UI: submitPayment(cardDetails)
-    UI->>API: processPayment(bookingId)
-    API->>Bank: authorizePayment(amount)
-    Bank-->>API: paymentResponse(SUCCESS)
-    
-    API->>DB: savePayment()
-    API->>DB: saveTicket()
-    
-    par Асинхронне сповіщення (не блокує UI)
-        API->>Email: sendTicketEmail(passengerEmail, PNR)
-        Email-->>API: deliveryStatus(QUEUED)
+    loop Повторні спроби оплати (максимум 3 спроби до закінчення 15 хв)
+        Tourist->>UI: submitPayment(cardDetails)
+        UI->>API: processPayment(bookingId)
+        API->>Bank: authorizePayment(amount)
+        
+        alt Успішна оплата (Bank Status: SUCCESS)
+            Bank-->>API: paymentResponse(SUCCESS)
+            API->>DB: savePayment()
+            API->>DB: saveTicket()
+            
+            par Асинхронне сповіщення
+                API->>Email: sendTicketEmail(passengerEmail, PNR)
+                Email-->>API: deliveryStatus(QUEUED)
+            end
+            
+            API-->>UI: paymentSuccess()
+
+        else Помилка оплати або вичерпання таймауту (Status FAILED)
+            Bank-->>API: paymentResponse(FAILED)
+            API->>DB: updateBookingStatus(CANCELLED)
+            API->>DB: releaseSeat(seatId, status: "AVAILABLE")
+            API-->>UI: paymentError("Payment failed. Seat released.")
+        end
     end
-    
-    API-->>UI: paymentSuccess()
 ```
