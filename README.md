@@ -2,10 +2,14 @@
 
 ```mermaid
 stateDiagram-v2
-    [*] --> PENDING: selectSeat()
+    [*] --> PENDING: selectSeat() / holdSeat()
+    
+    PENDING --> CANCELLED: [timeout > 15 min] / releaseSeat()
     PENDING --> ProcessingPayment: submitPayment()
+    
     ProcessingPayment --> PAID: paymentSuccess()
-    ProcessingPayment --> CANCELLED: paymentFailed()
+    ProcessingPayment --> CANCELLED: paymentFailed() / releaseSeat()
+    
     PAID --> [*]
     CANCELLED --> [*]
 ```
