@@ -224,38 +224,38 @@ sequenceDiagram
     Tourist->>+API: POST /bookings/{id}/pay (card_data)
     API->>+Service: processPayment(booking_id, card_data)
     
-    opt Перевірка дійсності холду (NOW() < expires_at)
-        Service->>+DB: SELECT status, expires_at FROM Booking WHERE id = booking_id
-        DB-->>-Service: status='PENDING', expires_at
-    end
+    Service->>+DB: SELECT status, expires_at FROM Booking WHERE id = booking_id
+    DB-->>-Service: status='PENDING', expires_at
 
-    Service->>+PG: authorizeAndCharge(amount, card_data)
-    PG-->>-Service: 200 OK (provider_ref="TX_12345")
+    opt Перевірка дійсності холду (NOW() < expires_at AND status == 'PENDING')
+        Service->>+PG: authorizeAndCharge(amount, card_data)
+        PG-->>-Service: 200 OK (provider_ref="TX_12345")
 
-    Service->>+DB: savePayment(booking_id, amount, status='SUCCESS', provider_ref)
-    DB-->>-Service: payment_id
+        Service->>+DB: savePayment(booking_id, amount, status='SUCCESS', provider_ref)
+        DB-->>-Service: payment_id
 
-    Service->>+DB: updateBookingStatus(booking_id, status='PAID')
-    DB-->>-Service: OK
+        Service->>+DB: updateBookingStatus(booking_id, status='PAID')
+        DB-->>-Service: OK
 
-    Service->>+DB: updateSeatStatus(flight_seat_id, status='BOOKED')
-    DB-->>-Service: OK
+        Service->>+DB: updateSeatStatus(flight_seat_id, status='BOOKED')
+        DB-->>-Service: OK
 
-    Service->>+DB: saveTicket(booking_id, passenger_id, flight_seat_id, price_at_booking)
-    DB-->>-Service: ticket_number="TKT-778899"
+        Service->>+DB: saveTicket(booking_id, passenger_id, flight_seat_id, price_at_booking)
+        DB-->>-Service: ticket_number="TKT-778899"
 
-    Service->>+DB: SELECT email FROM User WHERE id = user_id
-    DB-->>-Service: email="tourist@example.com"
-    
-    par Асинхронне сповіщення
+        Service->>+DB: SELECT email FROM User WHERE id = user_id
+        DB-->>-Service: email="tourist@example.com"
+        
         Service-)Email: sendTicketEmailAsync(ticket_number, pnr_code)
         activate Email
         Email-->>Service: ACK (Event Queued)
         deactivate Email
-    end
 
-    Service-->>-API: PaymentSuccessResponse(ticket_number, pnr_code)
-    API-->>-Tourist: 200 OK (Квиток успішно оформлено)
+        Service-->>API: PaymentSuccessResponse(ticket_number, pnr_code)
+        API-->>Tourist: 200 OK (Квиток успішно оформлено)
+    end
+    deactivate Service
+    deactivate API
 ```
 
 ### 2. Сценарій 2: Відмова платіжного gateway та повтор оплати (US-04 сценарій 2)
@@ -269,30 +269,38 @@ sequenceDiagram
     participant PG as PaymentGateway
 
     Tourist->>+API: POST /bookings/{id}/pay (card_data)
-    API->>+Service: processPaymentWithRetry(booking_id, card_data)
+    API->>+Service: processPayment(booking_id, card_data)
 
-    loop Повторні спроби оплати [attempt < 3 AND NOW() < expires_at]
-        Service->>+PG: authorizeAndCharge(amount, card_data)
-        alt Платіж відхилено шлюзом
-            PG-->>Service: 400 PaymentDeclined (Insufficient Funds)
-            Service->>+DB: savePayment(booking_id, amount, status='FAILED', provider_ref=NULL)
-            DB-->>-Service: payment_id
-            
-            Note over Service,DB: Замовлення залишається в статусі PENDING, місце в RESERVED
-            Service-->>API: PaymentFailedException("Картку відхилено. Спробуйте ще раз")
-            API-->>Tourist: 400 Bad Request (Замовлення PENDING, повторіть спробу)
-        else Успішна повторна оплата
-            PG-->>-Service: 200 OK (provider_ref="TX_99999")
-            Service->>+DB: savePayment(booking_id, amount, status='SUCCESS', provider_ref)
-            DB-->>-Service: payment_id
-            Service->>+DB: updateBookingStatus(booking_id, status='PAID')
-            DB-->>-Service: OK
-            Service-->>API: PaymentSuccessResponse(...)
-            API-->>Tourist: 200 OK (Оплачено успішно)
-        end
+    Service->>+PG: authorizeAndCharge(amount, card_data)
+    
+    alt Спроба 1: Платіж відхилено шлюзом
+        PG-->>-Service: 400 PaymentDeclined (Insufficient Funds)
+        Service->>+DB: savePayment(booking_id, amount, status='FAILED', provider_ref=NULL)
+        DB-->>-Service: payment_id
+        Note over Service,DB: Замовлення залишається PENDING, місце — RESERVED
+        Service-->>API: PaymentFailedException("Картку відхилено")
+        API-->>Tourist: 400 Bad Request (Замовлення PENDING, повторіть спробу)
     end
     deactivate Service
     deactivate API
+
+    Note over Tourist,PG: Турист повторює спробу оплати іншою карткою до expires_at
+
+    Tourist->>+API: POST /bookings/{id}/pay (new_card_data)
+    API->>+Service: processPayment(booking_id, new_card_data)
+    Service->>+PG: authorizeAndCharge(amount, new_card_data)
+    
+    alt Спроба 2: Успішна повторна оплата
+        PG-->>-Service: 200 OK (provider_ref="TX_99999")
+        Service->>+DB: savePayment(booking_id, amount, status='SUCCESS', provider_ref)
+        DB-->>-Service: payment_id
+        Service->>+DB: updateBookingStatus(booking_id, status='PAID')
+        DB-->>-Service: OK
+        Service->>+DB: updateSeatStatus(flight_seat_id, status='BOOKED')
+        DB-->>-Service: OK
+        Service-->>-API: PaymentSuccessResponse(...)
+        API-->>-Tourist: 200 OK (Оплачено успішно)
+    end
 ```
 
 ### 3. Сценарій 3: Автоматичне скасування замовлення за таймаутом (US-05)
