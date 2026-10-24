@@ -217,28 +217,42 @@ sequenceDiagram
     actor Tourist as Турист (Client)
     participant API as BookingController
     participant Service as BookingService
-    participant DB as PostgreSQL
+    participant DB as PostgreSQL DB
     participant PG as PaymentGateway
     participant Email as NotificationService
 
-    Tourist->>API: POST /bookings/{id}/pay (card_data)
-    API->>Service: processPayment(booking_id, card_data)
+    Tourist->>+API: POST /bookings/{id}/pay (card_data)
+    API->>+Service: processPayment(booking_id, card_data)
     
     opt Перевірка дійсності холду (NOW() < expires_at)
-        Service->>DB: SELECT status, expires_at FROM Booking WHERE id = booking_id
+        Service->>+DB: SELECT status, expires_at FROM Booking WHERE id = booking_id
+        DB-->>-Service: status='PENDING', expires_at
     end
 
-    Service->>PG: authorizeAndCharge(amount, card_data)
-    PG-->>Service: 200 OK (provider_ref)
+    Service->>+PG: authorizeAndCharge(amount, card_data)
+    PG-->>-Service: 200 OK (provider_ref="TX_12345")
 
-    Service->>DB: savePayment(booking_id, amount, status='SUCCESS')
-    Service->>DB: updateBookingStatus(booking_id, status='PAID')
-    Service->>DB: updateSeatStatus(flight_seat_id, status='BOOKED')
-    Service->>DB: saveTicket(booking_id, passenger_id, flight_seat_id)
+    Service->>+DB: savePayment(booking_id, amount, status='SUCCESS', provider_ref)
+    DB-->>-Service: payment_id
 
-    Service->>NotificationService: sendTicketEmail(ticket_number)
-    Service-->>API: PaymentSuccessResponse(...)
-    API-->>Tourist: 200 OK
+    Service->>+DB: updateBookingStatus(booking_id, status='PAID')
+    DB-->>-Service: OK
+
+    Service->>+DB: updateSeatStatus(flight_seat_id, status='BOOKED')
+    DB-->>-Service: OK
+
+    Service->>+DB: saveTicket(booking_id, passenger_id, flight_seat_id, price_at_booking)
+    DB-->>-Service: ticket_number="TKT-778899"
+
+    par Асинхронне сповіщення (Non-blocking)
+        Service-)NotificationService: sendTicketEmailAsync(ticket_number, pnr_code)
+        activate NotificationService
+        NotificationService-->>Service: ACK (Event Queued)
+        deactivate NotificationService
+    end
+
+    Service-->>-API: PaymentSuccessResponse(ticket_number, pnr_code)
+    API-->>-Tourist: 200 OK (Квиток успішно оформлено)
 ```
 
 ### 2. Сценарій 2: Відмова платіжного gateway та повтор оплати (US-04 сценарій 2)
@@ -248,27 +262,34 @@ sequenceDiagram
     actor Tourist as Турист (Client)
     participant API as BookingController
     participant Service as BookingService
-    participant DB as PostgreSQL
+    participant DB as PostgreSQL DB
     participant PG as PaymentGateway
 
-    Tourist->>API: POST /bookings/{id}/pay (card_data)
-    API->>Service: processPaymentWithRetry(booking_id, card_data)
+    Tourist->>+API: POST /bookings/{id}/pay (card_data)
+    API->>+Service: processPaymentWithRetry(booking_id, card_data)
 
     loop Повторні спроби оплати [attempt < 3 AND NOW() < expires_at]
-        Service->>PG: authorizeAndCharge(amount, card_data)
+        Service->>+PG: authorizeAndCharge(amount, card_data)
         alt Платіж відхилено шлюзом
-            PG-->>Service: 400 PaymentDeclined
-            Service->>DB: savePayment(booking_id, amount, status='FAILED')
-            Service-->>API: PaymentFailedException
-            API-->>Tourist: 400 Bad Request
+            PG-->>Service: 400 PaymentDeclined (Insufficient Funds)
+            Service->>+DB: savePayment(booking_id, amount, status='FAILED', provider_ref=NULL)
+            DB-->>-Service: payment_id
+            
+            Note over Service,DB: Замовлення залишається в статусі PENDING, місце в RESERVED
+            Service-->>API: PaymentFailedException("Картку відхилено. Спробуйте ще раз")
+            API-->>Tourist: 400 Bad Request (Замовлення PENDING, повторіть спробу)
         else Успішна повторна оплата
-            PG-->>Service: 200 OK
-            Service->>DB: savePayment(booking_id, amount, status='SUCCESS')
-            Service->>DB: updateBookingStatus(booking_id, status='PAID')
-            Service-->>API: PaymentSuccessResponse
-            API-->>Tourist: 200 OK
+            PG-->>-Service: 200 OK (provider_ref="TX_99999")
+            Service->>+DB: savePayment(booking_id, amount, status='SUCCESS', provider_ref)
+            DB-->>-Service: payment_id
+            Service->>+DB: updateBookingStatus(booking_id, status='PAID')
+            DB-->>-Service: OK
+            Service-->>API: PaymentSuccessResponse(...)
+            API-->>Tourist: 200 OK (Оплачено успішно)
         end
     end
+    deactivate Service
+    deactivate API
 ```
 
 ### 3. Сценарій 3: Автоматичне скасування замовлення за таймаутом (US-05)
@@ -277,15 +298,18 @@ sequenceDiagram
     autonumber
     participant Worker as HoldTimeoutWorker (System)
     participant Service as BookingService
-    participant DB as PostgreSQL
+    participant DB as PostgreSQL DB
 
-    Worker->>Service: checkExpiredHoldings()
-    Service->>DB: SELECT id, flight_seat_id FROM Booking WHERE status='PENDING' AND expires_at < NOW()
+    Worker->>+Service: checkExpiredHoldings()
+    Service->>+DB: SELECT id, flight_seat_id FROM Booking WHERE status='PENDING' AND expires_at < NOW()
+    DB-->>-Service: expired_bookings_list
 
     loop Для кожного простроченого замовлення
-        Service->>DB: updateBookingStatus(booking_id, status='CANCELLED')
-        Service->>DB: updateSeatStatus(flight_seat_id, status='AVAILABLE')
+        Service->>+DB: updateBookingStatus(booking_id, status='CANCELLED')
+        DB-->>-Service: OK
+        Service->>+DB: updateSeatStatus(flight_seat_id, status='AVAILABLE')
+        DB-->>-Service: OK
     end
 
-    Service-->>Worker: Completed
+    Service-->>-Worker: Completed (Release executed)
 ```
