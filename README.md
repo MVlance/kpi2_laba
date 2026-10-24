@@ -217,7 +217,7 @@ sequenceDiagram
     actor Tourist as Турист (Client)
     participant API as BookingController
     participant Service as BookingService
-    participant DB as PostgreSQL DB
+    participant DB as PostgreSQL
     participant PG as PaymentGateway
     participant Email as NotificationService
 
@@ -244,11 +244,14 @@ sequenceDiagram
     Service->>+DB: saveTicket(booking_id, passenger_id, flight_seat_id, price_at_booking)
     DB-->>-Service: ticket_number="TKT-778899"
 
-    par Асинхронне сповіщення (Non-blocking)
-        Service-)NotificationService: sendTicketEmailAsync(ticket_number, pnr_code)
-        activate NotificationService
-        NotificationService-->>Service: ACK (Event Queued)
-        deactivate NotificationService
+    Service->>+DB: SELECT email FROM User WHERE id = user_id
+    DB-->>-Service: email="tourist@example.com"
+    
+    par Асинхронне сповіщення
+        Service-)Email: sendTicketEmailAsync(ticket_number, pnr_code)
+        activate Email
+        Email-->>Service: ACK (Event Queued)
+        deactivate Email
     end
 
     Service-->>-API: PaymentSuccessResponse(ticket_number, pnr_code)
@@ -262,7 +265,7 @@ sequenceDiagram
     actor Tourist as Турист (Client)
     participant API as BookingController
     participant Service as BookingService
-    participant DB as PostgreSQL DB
+    participant DB as PostgreSQL
     participant PG as PaymentGateway
 
     Tourist->>+API: POST /bookings/{id}/pay (card_data)
@@ -298,7 +301,7 @@ sequenceDiagram
     autonumber
     participant Worker as HoldTimeoutWorker (System)
     participant Service as BookingService
-    participant DB as PostgreSQL DB
+    participant DB as PostgreSQL
 
     Worker->>+Service: checkExpiredHoldings()
     Service->>+DB: SELECT id, flight_seat_id FROM Booking WHERE status='PENDING' AND expires_at < NOW()
@@ -311,5 +314,5 @@ sequenceDiagram
         DB-->>-Service: OK
     end
 
-    Service-->>-Worker: Completed (Release executed)
+    Service-->>-Worker: Completed (Released)
 ```
