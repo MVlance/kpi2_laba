@@ -1,6 +1,113 @@
+## Цей файл містить вміст readme.md з усіх попередніх робіт. Текст для ЛР №3 починається з рядка *211*
+
+---
+# ЛР №1. Система бронювання авіаквитків - домен і модель даних (ER)
+
+Даний репозиторій містить опис даних обраного домену як моделі сутностей і зв'язків. 
+
+## 1. Опис предметної області
+Система автоматизує взаємодію між туристами, агентами та авіакомпаніями (пошук рейсів, вибір додаткових послуг, бронювання, можливість зворотного зв'язку та оплата.).
+
+## 2. Логічна ER-модель (v4, нормалізація до 3НФ)
+```mermaid
+erDiagram
+    USER ||--o{ BOOKING : places
+    BOOKING ||--|{ TICKET : contains
+    PASSENGER ||--o{ TICKET : assigned_to
+    FLIGHT ||--|{ FLIGHT_SEAT : has
+    FLIGHT_SEAT ||--o| TICKET : allocated_to
+    TICKET ||--o{ TICKET_EXTRA_SERVICE : includes
+    EXTRA_SERVICE ||--o{ TICKET_EXTRA_SERVICE : referenced_by
+    BOOKING ||--o{ PAYMENT : settles
+
+    USER {
+        uuid id PK
+        varchar email UK
+        varchar password_hash
+        varchar role
+        varchar full_name
+        varchar phone
+        timestamp created_at
+    }
+
+    FLIGHT {
+        uuid id PK
+        varchar flight_number
+        varchar airline_name
+        varchar origin_airport
+        varchar destination_airport
+        timestamp departure_time
+        timestamp arrival_time
+    }
+
+    FLIGHT_SEAT {
+        uuid id PK
+        uuid flight_id FK
+        varchar seat_code
+        varchar seat_class
+        decimal base_price
+        varchar status
+    }
+
+    BOOKING {
+        uuid id PK
+        varchar pnr_code UK
+        uuid user_id FK
+        varchar status
+        decimal total_price
+        timestamp created_at
+        timestamp expires_at
+    }
+
+    PASSENGER {
+        uuid id PK
+        varchar first_name
+        varchar last_name
+        varchar passport_number
+        date dob
+    }
+
+    TICKET {
+        uuid id PK
+        varchar ticket_number UK
+        uuid booking_id FK
+        uuid passenger_id FK
+        uuid flight_seat_id FK,UK
+        decimal price_at_booking
+    }
+
+    EXTRA_SERVICE {
+        uuid id PK
+        varchar code UK
+        varchar name
+        decimal current_price
+    }
+
+    TICKET_EXTRA_SERVICE {
+        uuid id PK
+        uuid ticket_id FK
+        uuid service_id FK
+        decimal purchased_price
+        int quantity
+    }
+
+    PAYMENT {
+        uuid id PK
+        uuid booking_id FK
+        decimal amount
+        varchar currency
+        varchar status
+        varchar payment_provider_ref
+        timestamp created_at
+    }
+```
+
+---
+
+
 ### 2. `README.md` (Огляд та Use Case діаграма)
 
-# Система бронювання авіаквитків - Вимоги та Use Cases
+# ЛР №2. Система бронювання авіаквитків - Вимоги та Use Cases
 
 Цей репозиторій містить вимоги, специфіковані за синтаксисом EARS, User Stories із Gherkin-сценаріями, матрицю трасування та Use Case діаграму в межах виконання Завдання 2.
 
@@ -99,3 +206,86 @@ flowchart LR
     UC7 --- NotificationService2
 ```
 
+---
+
+## ЛР №3. Діаграми послідовності (Sequence Diagrams) 
+
+### 1. Сценарій 1: Успішна оплата замовлення (US-04 сценарій 1)
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Tourist as Турист (Client)
+    participant API as BookingController
+    participant Service as BookingService
+    participant DB as PostgreSQL
+    participant PG as PaymentGateway
+    participant Email as NotificationService
+
+    Tourist->>API: POST /bookings/{id}/pay (card_data)
+    API->>Service: processPayment(booking_id, card_data)
+    
+    opt Перевірка дійсності холду (NOW() < expires_at)
+        Service->>DB: SELECT status, expires_at FROM Booking WHERE id = booking_id
+    end
+
+    Service->>PG: authorizeAndCharge(amount, card_data)
+    PG-->>Service: 200 OK (provider_ref)
+
+    Service->>DB: savePayment(booking_id, amount, status='SUCCESS')
+    Service->>DB: updateBookingStatus(booking_id, status='PAID')
+    Service->>DB: updateSeatStatus(flight_seat_id, status='BOOKED')
+    Service->>DB: saveTicket(booking_id, passenger_id, flight_seat_id)
+
+    Service->>NotificationService: sendTicketEmail(ticket_number)
+    Service-->>API: PaymentSuccessResponse(...)
+    API-->>Tourist: 200 OK
+```
+
+### 2. Сценарій 2: Відмова платіжного gateway та повтор оплати (US-04 сценарій 2)
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Tourist as Турист (Client)
+    participant API as BookingController
+    participant Service as BookingService
+    participant DB as PostgreSQL
+    participant PG as PaymentGateway
+
+    Tourist->>API: POST /bookings/{id}/pay (card_data)
+    API->>Service: processPaymentWithRetry(booking_id, card_data)
+
+    loop Повторні спроби оплати [attempt < 3 AND NOW() < expires_at]
+        Service->>PG: authorizeAndCharge(amount, card_data)
+        alt Платіж відхилено шлюзом
+            PG-->>Service: 400 PaymentDeclined
+            Service->>DB: savePayment(booking_id, amount, status='FAILED')
+            Service-->>API: PaymentFailedException
+            API-->>Tourist: 400 Bad Request
+        else Успішна повторна оплата
+            PG-->>Service: 200 OK
+            Service->>DB: savePayment(booking_id, amount, status='SUCCESS')
+            Service->>DB: updateBookingStatus(booking_id, status='PAID')
+            Service-->>API: PaymentSuccessResponse
+            API-->>Tourist: 200 OK
+        end
+    end
+```
+
+### 3. Сценарій 3: Автоматичне скасування замовлення за таймаутом (US-05)
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Worker as HoldTimeoutWorker (System)
+    participant Service as BookingService
+    participant DB as PostgreSQL
+
+    Worker->>Service: checkExpiredHoldings()
+    Service->>DB: SELECT id, flight_seat_id FROM Booking WHERE status='PENDING' AND expires_at < NOW()
+
+    loop Для кожного простроченого замовлення
+        Service->>DB: updateBookingStatus(booking_id, status='CANCELLED')
+        Service->>DB: updateSeatStatus(flight_seat_id, status='AVAILABLE')
+    end
+
+    Service-->>Worker: Completed
+```
