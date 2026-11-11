@@ -345,6 +345,7 @@ stateDiagram-v2
     state "EMAIL_SENDING" as EmailSending
     state "EMAIL_QUEUED" as EmailQueued
     state "EMAIL_FAILED" as EmailFailed
+    state "EMAIL_DONE (лист поставлено в чергу або передано підтримці)" as EmailDone
     state "RESPONDING" as Responding
     state "RESPONDED" as Responded
 
@@ -357,13 +358,13 @@ stateDiagram-v2
 
     [*] --> seat_check : Tourist -> BookingController - обрати місце 12A
     seat_check --> Pending : [AVAILABLE] місце RESERVED, expires_at = NOW + 15 хв
-    seat_check --> [*] : [RESERVED] 409 Місце тимчасово недоступне
+    seat_check --> [*] : [місце RESERVED або BOOKED] 409 Місце тимчасово недоступне
 
     Pending --> hold_check : Tourist -> BookingController - POST pay (card_data)
     Pending --> Cancelled : HoldTimeoutWorker -> BookingService - checkExpiredHoldings, expires_at минув
 
     hold_check --> Charging : [холд активний]
-    hold_check --> Cancelled : [холд минув] 400 Холд протермінований
+    hold_check --> Cancelled : [холд минув] 400 Холд terminated
 
     Charging --> gw_result : BookingService -> PaymentGateway - authorizeAndCharge
     gw_result --> Commit : [200 OK] provider_ref
@@ -383,11 +384,45 @@ stateDiagram-v2
 
     Responding --> Responded : BookingService -> Tourist - 200 OK Квиток оформлено
 
-    EmailQueued --> notify_join
-    EmailFailed --> notify_join
+    EmailQueued --> EmailDone
+    EmailFailed --> EmailDone
+    EmailDone --> notify_join
     Responded --> notify_join
     notify_join --> Paid
 
     Paid --> [*]
     Cancelled --> [*]
 ```
+
+## Перевірка повноти діаграми
+
+### Повнота переходів і досяжність
+| Стан | Вихідні переходи | Досяжний з `[*]` | Веде до `[*]` |
+|:--|:--|:--|:--|
+| PENDING | hold_check, CANCELLED (воркер) | так | так |
+| CHARGING | gw_result | так | так |
+| COMMIT | notify_fork | так | так |
+| EMAIL_SENDING | EMAIL_QUEUED, EMAIL_SENDING (до 3), EMAIL_FAILED | так | так |
+| EMAIL_QUEUED, EMAIL_FAILED | EMAIL_DONE | так | так |
+| EMAIL_DONE | notify_join | так | так |
+| RESPONDING | RESPONDED | так | так |
+| RESPONDED | notify_join | так | так |
+| PAID, CANCELLED | `[*]` | так | так |
+
+### Повтор `EMAIL_SENDING → EMAIL_SENDING` обмежений 3 спробами, нескінченних циклів немає. Цикл `PENDING → ... → PENDING` обмежений трьома невдалими спробами.
+
+### Умови guards вичерпні й взаємовиключні
+| Вузол | Guards|
+|:--|:--|
+| seat_check | місце AVAILABLE / RESERVED або BOOKED|
+| hold_check | холд активний / холд минув |
+| gw_result | 200 OK / 400 PaymentDeclined або таймаут |
+| fail_check | спроб менше 3 / спроб = 3 |
+
+### Узгодженість з Sequence і Use Case
+| Повідомлення процесу | Sequence | UC / US |
+|:--|:--|:--|
+| M2, M3 (200), M4, M5 | Сценарій 1 | UC-04, UC-05, UC-07, US-04 sc.1 |
+| M3 (400) і повтор | Сценарій 2 | US-04 sc.2 |
+| M6 | Сценарій 3 | UC-06, US-05 |
+| M1 | US-02 (Gherkin) | UC-02, UC-03 |

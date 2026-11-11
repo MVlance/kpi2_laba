@@ -339,7 +339,7 @@
 
 ### *Наміром* є описати процес із UC-04 "Оплатити замовлення" однією формою, машиною станів.
 
-## Стани в БД
+## Стан - статуси в БД
 | Стан | Booking | FlightSeat | Payment |
 |:--|:--|:--|:--|
 | PENDING | PENDING | RESERVED | немає або FAILED |
@@ -348,14 +348,15 @@
 | CANCELLED | CANCELLED | AVAILABLE | немає або FAILED |
 
 ## Повідомлення
-| Відправник → отримувач: повідомлення         | Реакція                     | Без відповіді                                         |
-|:---------------------------------------------|:----------------------------|:------------------------------------------------------|
-| Tourist → Controller: вибір місця            | PENDING або 409             | клієнт пішов, холд спливе (M6)                        |
-| Tourist → Controller: POST pay               | 200 або 400                 | клієнт відключився, результат у БД                    |
-| Service → Gateway: authorizeAndCharge        | 200 або 400                 | таймаут = FAILED, спроба рахується                    |
-| Service → Notification: sendTicketEmailAsync | ACK                         | 3 повтори, потім EMAIL_FAILED, Booking лишається PAID |
-| Service → Tourist: 200 або 400               | кінець процесу              | результат збережено, клієнт перечитає статус          |
-| Worker → Service: checkExpiredHoldings       | CANCELLED і місце AVAILABLE | наступний запуск воркера                              |
+| # | Відправник -> отримувач: повідомлення | Реакція | Без відповіді |
+|:--|:--|:--|:--|
+| M1 | Tourist -> Controller: вибір місця | PENDING або 409 | клієнт пішов, холд спливе (M6) |
+| M2 | Tourist -> Controller: POST pay | 200 або 400 | клієнт відключився, результат у БД |
+| M3 | Service -> Gateway: authorizeAndCharge | 200 або 400 | таймаут = FAILED, спроба рахується |
+| M4 | Service -> Notification: sendTicketEmailAsync | ACK | 3 повтори, потім EMAIL_FAILED, Booking лишається PAID |
+| M5 | Service -> Tourist: 200 або 400 | кінець процесу | результат збережено, клієнт перечитає статус |
+| M6 | Worker -> Service: checkExpiredHoldings | CANCELLED і місце AVAILABLE | наступний запуск воркера |
+
 
 ## Критерії прийняття
 1. Кожен стан досяжний, без нескінченних циклів (усі повтори не більше 3).
