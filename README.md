@@ -331,14 +331,63 @@ sequenceDiagram
 
 ## ЛР №4. Процес / поведінка (Activity, BPMN або машина станів)
 
+### Процес деталізує UC-04. 
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Pending : Tourist - вибрати місце 12A
-    Pending --> Paying : Tourist - POST pay
-    Paying --> Paid : PaymentGateway - SUCCESS
-    Paying --> Pending : PaymentGateway - FAILED або таймаут
-    Pending --> Cancelled : HoldTimeoutWorker - expires_at минув
+    direction TB
+
+    state "PENDING (Booking PENDING, місце RESERVED)" as Pending
+    state "CHARGING (Booking PENDING, платіж у шлюзі)" as Charging
+    state "COMMIT (атомарна транзакція)" as Commit
+    state "PAID (Booking PAID, місце BOOKED)" as Paid
+    state "CANCELLED (Booking CANCELLED, місце AVAILABLE)" as Cancelled
+    state "EMAIL_SENDING" as EmailSending
+    state "EMAIL_QUEUED" as EmailQueued
+    state "EMAIL_FAILED" as EmailFailed
+    state "RESPONDING" as Responding
+    state "RESPONDED" as Responded
+
+    state seat_check <<choice>>
+    state hold_check <<choice>>
+    state gw_result <<choice>>
+    state fail_check <<choice>>
+    state notify_fork <<fork>>
+    state notify_join <<join>>
+
+    [*] --> seat_check : Tourist -> BookingController - обрати місце 12A
+    seat_check --> Pending : [AVAILABLE] місце RESERVED, expires_at = NOW + 15 хв
+    seat_check --> [*] : [RESERVED] 409 Місце тимчасово недоступне
+
+    Pending --> hold_check : Tourist -> BookingController - POST pay (card_data)
+    Pending --> Cancelled : HoldTimeoutWorker -> BookingService - checkExpiredHoldings, expires_at минув
+
+    hold_check --> Charging : [холд активний]
+    hold_check --> Cancelled : [холд минув] 400 Холд протермінований
+
+    Charging --> gw_result : BookingService -> PaymentGateway - authorizeAndCharge
+    gw_result --> Commit : [200 OK] provider_ref
+    gw_result --> fail_check : [400 PaymentDeclined або таймаут шлюзу] Payment FAILED
+
+    fail_check --> Pending : [невдалих спроб менше 3] 400 Повторіть оплату іншою карткою
+    fail_check --> Cancelled : [невдалих спроб = 3] 400 Спроби вичерпано
+
+    Commit --> notify_fork : Payment SUCCESS, Booking PAID, місце BOOKED, Ticket створено
+
+    notify_fork --> EmailSending : BookingService -> NotificationService - sendTicketEmailAsync, без очікування доставки
+    notify_fork --> Responding : BookingService готує відповідь клієнту
+
+    EmailSending --> EmailQueued : NotificationService - ACK Event Queued
+    EmailSending --> EmailSending : [ACK немає і спроб менше 3] повторна публікація
+    EmailSending --> EmailFailed : [ACK немає і спроб = 3] Booking лишається PAID
+
+    Responding --> Responded : BookingService -> Tourist - 200 OK Квиток оформлено
+
+    EmailQueued --> notify_join
+    EmailFailed --> notify_join
+    Responded --> notify_join
+    notify_join --> Paid
+
     Paid --> [*]
     Cancelled --> [*]
 ```
