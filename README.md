@@ -1,4 +1,4 @@
-## Цей файл містить вміст readme.md з усіх попередніх робіт. Текст для ЛР №3 починається з рядка *211*
+## Цей файл містить вміст readme.md з усіх попередніх робіт. Текст для ЛР №4 починається з рядка *332*
 
 ---
 # ЛР №1. Система бронювання авіаквитків - домен і модель даних (ER)
@@ -303,7 +303,7 @@ sequenceDiagram
     end
 ```
 
-### 3. Сценарій 3: Автоматичне скасування замовлення за таймаутом (US-05)
+### ЛР №3. Сценарій 3: Автоматичне скасування замовлення за таймаутом (US-05)
 ```mermaid
 sequenceDiagram
     autonumber
@@ -323,4 +323,22 @@ sequenceDiagram
     end
 
     Service-->>-Worker: Completed (Released)
+```
+
+
+---
+
+
+## ЛР №4. Процес / поведінка (Activity, BPMN або машина станів)
+
+
+```mermaid
+stateDiagram-v2
+    [*] --> Pending : Tourist - вибрати місце 12A
+    Pending --> Paying : Tourist - POST pay
+    Paying --> Paid : PaymentGateway - SUCCESS
+    Paying --> Pending : PaymentGateway - FAILED або таймаут
+    Pending --> Cancelled : HoldTimeoutWorker - expires_at минув
+    Paid --> [*]
+    Cancelled --> [*]
 ```
