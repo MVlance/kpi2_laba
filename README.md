@@ -409,7 +409,7 @@ stateDiagram-v2
 | RESPONDED | notify_join | так | так |
 | PAID, CANCELLED | `[*]` | так | так |
 
-### Повтор `EMAIL_SENDING → EMAIL_SENDING` обмежений 3 спробами, нескінченних циклів немає. Цикл `PENDING → ... → PENDING` обмежений трьома невдалими спробами.
+### Повтор `EMAIL_SENDING -> EMAIL_SENDING` обмежений 3 спробами, нескінченних циклів немає. Цикл `PENDING -> ... -> PENDING` обмежений трьома невдалими спробами.
 
 ### Умови guards вичерпні й взаємовиключні
 | Вузол | Guards|
@@ -565,3 +565,56 @@ flowchart TB
 | IPaymentGateway | Payment Gateway | BookingService | `authorizeAndCharge(amount, card_data)` дає 200 OK з provider_ref або 400 PaymentDeclined. Відсутність відповіді це FAILED |
 | INotification | Notification Service | BookingService | `sendTicketEmailAsync(ticket_number, pnr_code)` дає ACK (Event Queued), без очікування доставки |
 | IAgentBilling | Agent Billing System | BookingService | `debitDeposit(agent_id, amount)` |
+
+
+
+## Аудит моделі
+
+### 1. Трасування компонентів
+| Компонент | Дані (ЛР №1) | Вимоги і UC (ЛР №2) | Взаємодія (ЛР №3) | Процес (ЛР №4) |
+|:--|:--|:--|:--|:--|
+| Tourist Web UI | - | Tourist, UC-01..04, 08 | актор Tourist | M1, M2, M5 |
+| Agent Portal UI | User.role = AGENT | Agent, UC-02b, 09, 10, US-06 | - | - |
+| FlightController | Flight, FlightSeat | UC-01, US-01, NFR-01 | - | - |
+| BookingController | Booking | UC-02, 03, 04, 08, 10, US-02..04, 06 | BookingController | M1, M2, M5 |
+| AuthController | User | US-06, NFR-06 | - | - |
+| FlightSearchService | Flight, FlightSeat | UC-01, NFR-01 | - | - |
+| BookingService | Booking, FlightSeat, Passenger, Ticket, ExtraService, TicketExtraService, Payment | REQ-EARS-02..06, NFR-02, 03, 05, 08 | BookingService | PENDING, CHARGING, COMMIT, PAID, CANCELLED, seat_check, hold_check, fail_check |
+| AuthService | User | NFR-06, US-06 | - | - |
+| HoldTimeoutWorker | Booking.expires_at | REQ-EARS-03, NFR-02, 04, UC-06, US-05 | HoldTimeoutWorker | M6 |
+| DataAccessLayer | усі 9 сутностей | REQ-EARS-01, NFR-07, 08 | - (між сервісом і PostgreSQL) | COMMIT |
+| PostgreSQL | усі 9 сутностей | NFR-07 | PostgreSQL | - |
+| Payment Gateway | Payment | UC-05, вторинний актор | PaymentGateway | M3 |
+| Notification Service | - | UC-07, NFR-05 | NotificationService | M4 |
+| Agent Billing System | - | UC-05b, UC-09, вторинний актор | - | поза процесом |
+
+### 2. Трасування залежностей
+| Залежність | Джерело |
+|:--|:--|
+| UI -> IFlightAPI, IBookingAPI, IAuthAPI | Tourist -> BookingController (Seq 1-2), M1, M2, US-01 |
+| BookingController -> IBookingService | API -> Service: `processPayment` (Seq 1-2) |
+| BookingController, AuthController -> IAuthService; AuthService -> IUserRepository | US-06, NFR-06 |
+| FlightController -> FlightSearchService -> IFlightRepository | UC-01 |
+| BookingService -> IPaymentGateway | Service -> PG: `authorizeAndCharge` (Seq 1-2), M3 |
+| BookingService -> INotification | Service -> Email: `sendTicketEmailAsync` (Seq 1), M4 |
+| BookingService -> IFlightRepository, IBookingRepository, IUserRepository, IUnitOfWork | Service -> DB (Seq 1-3), NFR-08 |
+| HoldTimeoutWorker -> IHoldRelease | Worker -> Service: `checkExpiredHoldings` (Seq 3), M6 |
+| DataAccessLayer -> SQL | усі виклики -> DB в Seq 1-3 |
+| BookingService -> IAgentBilling | UC-05b, UC-09 |
+
+### 3. Межа системи
+- Межу перетинають: актори Tourist і Agent (до UI) та три залежності BookingService до зовнішніх систем. Інших перетинів немає.
+- UI не залежить від сервісів і БД. До PostgreSQL звертається лише DataAccessLayer.
+- Зовнішні системи не залежать від внутрішніх компонентів: ACK від Notification Service лише відповідь на виклик.
+
+### 4. Повнота інтерфейсів
+Усього 15 інтерфейсів і 14 компонентів. У кожного інтерфейсу є провайдер і щонайменше один споживач (каталог вище). Залежностей без інтерфейсу немає.
+
+### 5. Узгодженість з ланцюгом моделей
+| Модель | Що перевірено | Результат |
+|:--|:--|:--|
+| ЛР №1, дані | 9 сутностей в репозиторії: Flight, FlightSeat -> IFlightRepository. Booking, Passenger, Ticket, ExtraService, TicketExtraService, Payment -> IBookingRepository. User -> IUserRepository | Усі 9 покриті, доступ лише через DataAccessLayer |
+| ЛР №2, вимоги | REQ-EARS-01..06 і NFR-01..08 мають носія (`spec.md`, "Трасування") | Покрито. REQ-EARS-07 не покрита, як і в ЛР №2 |
+| ЛР №2, Use Cases | UC-01 -> FlightSearchService. UC-02, 03 -> `reserveSeat`. UC-04, 05 -> `processPayment` + IPaymentGateway. UC-06 -> HoldTimeoutWorker. UC-07 -> INotification. UC-08 -> `addExtraService`. UC-05b, 09 -> IAgentBilling. UC-10 -> `listBookings` | Усі 10 UC мають носія |
+| ЛР №3, Sequence | 6 системних учасників - 6 компонентів, актор Tourist - Tourist Web UI | Усі виклики Sequence мають операцію інтерфейсу |
+| ЛР №4, процес | M1-M6 - операції інтерфейсів, стани і choice - BookingService, таймаут шлюзу це FAILED, лист асинхронний і не блокує відповідь | Розбіжностей немає |
