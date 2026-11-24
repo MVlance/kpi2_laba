@@ -1,4 +1,4 @@
-## Цей файл містить вміст readme.md з усіх попередніх робіт. Текст для ЛР №4 починається з рядка *332*
+## Цей файл містить вміст readme.md з усіх попередніх робіт. Текст для ЛР №4 починається з рядка *434*
 
 ---
 # ЛР №1. Система бронювання авіаквитків - домен і модель даних (ER)
@@ -426,3 +426,37 @@ stateDiagram-v2
 | M3 (400) і повтор | Сценарій 2 | US-04 sc.2 |
 | M6 | Сценарій 3 | UC-06, US-05 |
 | M1 | US-02 (Gherkin) | UC-02, UC-03 |
+
+
+---
+
+
+## ЛР №5. Архітектура (Component Diagram)
+
+### Чернетка: основні шари та зовнішні системи.
+
+```mermaid
+flowchart TB
+    User(("Користувач"))
+
+    subgraph SYS ["Межа системи"]
+        UI["Web UI"]
+        API["REST API (BookingController)"]
+        Service["BookingService"]
+        DAL["Data Access"]
+        DB[("PostgreSQL")]
+    end
+
+    subgraph EXT ["Зовнішні системи"]
+        PG["Payment Gateway"]
+        Mail["Notification Service"]
+    end
+
+    User --> UI
+    UI --> API
+    API --> Service
+    Service --> DAL
+    DAL --> DB
+    Service --> PG
+    Service --> Mail
+```
