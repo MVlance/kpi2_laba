@@ -368,13 +368,38 @@
 ---
 
 
-## ЛР №5. Архітектура компонентної моделі
 
-### *Наміром* є описати архітектуру системи бронювання авіаквитків компонентною діаграмою (ADR-0005).
 
-**Компоненти:** Web UI, REST API (BookingController), BookingService, Data Access, PostgreSQL.
-**Зовнішні системи:** Payment Gateway, Notification Service.
+---
+
+
+## ЛР №5. Архітектура: компонентна модель (Component Diagram)
+
+### *Наміром* є описати архітектуру системи бронювання авіаквитків: компоненти, інтерфейси, залежності та межу системи, спираючись на ЛР №1-4 без змін у них (ADR-0005).
+
+**Межа системи.** Всередині: UI, API, сервіси, Data Access, PostgreSQL. Поза межею: Payment Gateway, Notification Service, Agent Billing System (вторинні актори ЛР №2).
+**Поза межами:** OAuth/зовнішній Identity (автентифікація власна, NFR-06), SMS, зовнішній API рейсів, лояльність (REQ-EARS-07), повернення коштів, деплоймент.
+**Припущення (з UC/US, не з Sequence):** `AuthController`/`validateToken` (US-06, NFR-06), `listBookings` (UC-10), `addExtraService` (US-03), `IAgentBilling` (UC-05b, UC-09).
+
+## Компоненти
+| Шар | Компонент | Provides | Requires |
+|:--|:--|:--|:--|
+| UI | Tourist Web UI, Agent Portal UI | - | IFlightAPI, IBookingAPI, IAuthAPI |
+| API | FlightController | IFlightAPI | IFlightSearch |
+| API | BookingController | IBookingAPI | IBookingService, IAuthService |
+| API | AuthController | IAuthAPI | IAuthService |
+| Service | FlightSearchService | IFlightSearch | IFlightRepository |
+| Service | BookingService | IBookingService, IHoldRelease | IFlightRepository, IBookingRepository, IUserRepository, IUnitOfWork, IPaymentGateway, INotification, IAgentBilling |
+| Service | AuthService | IAuthService | IUserRepository |
+| Фонова задача | HoldTimeoutWorker | - | IHoldRelease |
+| Data Access | DataAccessLayer | IFlightRepository, IBookingRepository, IUserRepository, IUnitOfWork | SQL |
+| БД | PostgreSQL | SQL | - |
+| Зовнішні | Payment Gateway, Notification Service, Agent Billing System | IPaymentGateway, INotification, IAgentBilling | - |
+
+Операції інтерфейсів і повне трасування описано в `README.md`.
 
 ## Критерії прийняття
-1. Компоненти та залежності відповідають ЛР №1-4 (вимогам, моделі даних, взаємодії та процесу).
-2. Компоненти, інтерфейси й межі системи коректні.
+1. Кожен компонент і залежність трасуються до ЛР №1-4 (таблиці аудиту в `README.md`).
+2. Кожна залежність йде через інтерфейс: кожен required має provided, кожен provided має споживача.
+3. Межу перетинають лише три зовнішні інтеграції. До PostgreSQL звертається лише DataAccessLayer.
+4. M1-M6 (з ЛР №4) і виклики Sequence (ЛР №3) відповідають операціям інтерфейсів.

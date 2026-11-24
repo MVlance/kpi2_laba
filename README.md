@@ -433,30 +433,135 @@ stateDiagram-v2
 
 ## ЛР №5. Архітектура (Component Diagram)
 
-### Чернетка: основні шари та зовнішні системи.
+Компонентна модель системи бронювання авіаквитків.
+
+### Умовні позначення
+- Прямокутник це компонент, овал це інтерфейс, помаранчевий колір це зовнішня система.
+- Суцільна лінія від інтерфейсу до компонента означає **provided**: компонент надає інтерфейс.
+- Пунктирна стрілка від компонента до інтерфейсу означає **required**: компонент використовує інтерфейс.
+- Рамка "Межа системи" обмежує систему. Усе поза нею це актори й зовнішні системи.
 
 ```mermaid
 flowchart TB
-    User(("Користувач"))
+    Tourist(("Tourist"))
+    Agent(("Agent"))
 
-    subgraph SYS ["Межа системи"]
-        UI["Web UI"]
-        API["REST API (BookingController)"]
-        Service["BookingService"]
-        DAL["Data Access"]
-        DB[("PostgreSQL")]
+    subgraph SYS ["Межа системи: Система бронювання авіаквитків"]
+
+        subgraph BGLayer ["Фонові задачі"]
+            HWrk["component<br/>HoldTimeoutWorker"]
+        end
+
+        subgraph UILayer ["UI"]
+            TUI["component<br/>Tourist Web UI"]
+            AUI["component<br/>Agent Portal UI"]
+        end
+
+        subgraph APILayer ["API (REST)"]
+            iFlightAPI(["IFlightAPI"])
+            iBookingAPI(["IBookingAPI"])
+            iAuthAPI(["IAuthAPI"])
+            FCtl["component<br/>FlightController"]
+            BCtl["component<br/>BookingController"]
+            ACtl["component<br/>AuthController"]
+        end
+
+        subgraph SvcLayer ["Services"]
+            iFlightSearch(["IFlightSearch"])
+            iBookingSvc(["IBookingService"])
+            iHoldRelease(["IHoldRelease"])
+            iAuthSvc(["IAuthService"])
+            FSvc["component<br/>FlightSearchService"]
+            BSvc["component<br/>BookingService"]
+            ASvc["component<br/>AuthService"]
+        end
+
+        subgraph DALayer ["Data Access"]
+            iFlightRepo(["IFlightRepository"])
+            iBookingRepo(["IBookingRepository"])
+            iUserRepo(["IUserRepository"])
+            iUoW(["IUnitOfWork"])
+            DAL["component<br/>DataAccessLayer"]
+        end
+
+        iSQL(["SQL"])
+        DB[("component<br/>PostgreSQL")]
     end
 
-    subgraph EXT ["Зовнішні системи"]
-        PG["Payment Gateway"]
-        Mail["Notification Service"]
+    subgraph EXT ["Зовнішні системи (поза межею)"]
+        iPayGw(["IPaymentGateway"])
+        iNotify(["INotification"])
+        iAgentBill(["IAgentBilling"])
+        PGW["external<br/>Payment Gateway"]
+        NTF["external<br/>Notification Service (Email)"]
+        ABS["external<br/>Agent Billing System"]
     end
 
-    User --> UI
-    UI --> API
-    API --> Service
-    Service --> DAL
-    DAL --> DB
-    Service --> PG
-    Service --> Mail
+    Tourist --> TUI
+    Agent --> AUI
+
+    TUI -.-> iFlightAPI
+    TUI -.-> iBookingAPI
+    TUI -.-> iAuthAPI
+    AUI -.-> iFlightAPI
+    AUI -.-> iBookingAPI
+    AUI -.-> iAuthAPI
+    iFlightAPI --- FCtl
+    iBookingAPI --- BCtl
+    iAuthAPI --- ACtl
+
+    FCtl -.-> iFlightSearch
+    BCtl -.-> iBookingSvc
+    BCtl -.-> iAuthSvc
+    ACtl -.-> iAuthSvc
+    iFlightSearch --- FSvc
+    iBookingSvc --- BSvc
+    iAuthSvc --- ASvc
+    HWrk -.-> iHoldRelease
+    iHoldRelease --- BSvc
+
+    FSvc -.-> iFlightRepo
+    BSvc -.-> iFlightRepo
+    BSvc -.-> iBookingRepo
+    BSvc -.-> iUserRepo
+    BSvc -.-> iUoW
+    ASvc -.-> iUserRepo
+    iFlightRepo --- DAL
+    iBookingRepo --- DAL
+    iUserRepo --- DAL
+    iUoW --- DAL
+
+    DAL -.-> iSQL
+    iSQL --- DB
+
+    BSvc -.-> iPayGw
+    BSvc -.-> iNotify
+    BSvc -.-> iAgentBill
+    iPayGw --- PGW
+    iNotify --- NTF
+    iAgentBill --- ABS
+
+    classDef iface fill:#e8f1ff,stroke:#2b6cb0,color:#000
+    classDef ext fill:#fff3e0,stroke:#c05621,color:#000
+    class iFlightAPI,iBookingAPI,iAuthAPI,iFlightSearch,iBookingSvc,iHoldRelease,iAuthSvc,iFlightRepo,iBookingRepo,iUserRepo,iUoW,iSQL,iPayGw,iNotify,iAgentBill iface
+    class PGW,NTF,ABS ext
 ```
+
+### Каталог інтерфейсів
+| Інтерфейс | Надає | Використовують | Операції |
+|:--|:--|:--|:--|
+| IFlightAPI | FlightController | Tourist Web UI, Agent Portal UI | `GET /flights?origin&destination&date&airline` |
+| IBookingAPI | BookingController | Tourist Web UI, Agent Portal UI | `POST /bookings` (вибір місця), `POST /bookings/{id}/pay`, `POST /bookings/{id}/extras`, `GET /bookings/{id}`, `GET /bookings` (лише AGENT). Відповіді 200, 400, 409 |
+| IAuthAPI | AuthController | Tourist Web UI, Agent Portal UI | `POST /auth/login` |
+| IFlightSearch | FlightSearchService | FlightController | `searchFlights(origin, destination, date, airline)` |
+| IBookingService | BookingService | BookingController | `reserveSeat(user_id, flight_seat_id, passengers)`, `processPayment(booking_id, card_data)`, `addExtraService(booking_id, service_code, quantity)`, `getBooking(booking_id)`, `listBookings(agent_id)` |
+| IHoldRelease | BookingService | HoldTimeoutWorker | `checkExpiredHoldings()` |
+| IAuthService | AuthService | BookingController, AuthController | `authenticate(email, password)`, `validateToken(token)` |
+| IFlightRepository | DataAccessLayer | FlightSearchService, BookingService | `findFlights(...)`, `findSeat(flight_seat_id)`, `updateSeatStatus(flight_seat_id, status)` |
+| IBookingRepository | DataAccessLayer | BookingService | `saveBooking`, `findBooking`, `updateBookingStatus`, `findExpiredPendingBookings`, `savePassenger`, `saveTicket`, `saveExtraService`, `savePayment`, `countFailedPayments` |
+| IUserRepository | DataAccessLayer | BookingService, AuthService | `findByEmail(email)`, `findById(user_id)` |
+| IUnitOfWork | DataAccessLayer | BookingService | `begin()`, `commit()`, `rollback()` :--Portal UI |
+| SQL | PostgreSQL | DataAccessLayer | SQL-запити |
+| IPaymentGateway | Payment Gateway | BookingService | `authorizeAndCharge(amount, card_data)` дає 200 OK з provider_ref або 400 PaymentDeclined. Відсутність відповіді це FAILED |
+| INotification | Notification Service | BookingService | `sendTicketEmailAsync(ticket_number, pnr_code)` дає ACK (Event Queued), без очікування доставки |
+| IAgentBilling | Agent Billing System | BookingService | `debitDeposit(agent_id, amount)` |
